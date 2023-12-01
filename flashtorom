@@ -1,0 +1,118 @@
+#!/usr/bin/python3
+# File has 3 parts (Very very losely MVC not really):
+# 1. Config Logic: Argument handling, .config directory setup, initialization
+# 2. Program Logic: Phrase Selection, View control, Program Loop
+# 3. View Logic: TUI interface, display logic, display functions
+# Everything is going to be contained in one file because the goal is for setup to be as easy as possible.
+#    This is not meant to be super complex its just a simple application.
+import sys
+import os
+import json
+
+conf_path = os.environ.get("HOME") + ".config/flashtorom/"
+
+def main():
+    if not os.path.exists(conf_path + "config"):
+        os.makedirs(conf_path)
+
+        with open(conf_path + "config", "w") as config_file:
+            default_config = {
+                    "read" : True,
+                    "write" : True,
+                    "letters" : True,
+                    "words" : True,
+                    "phrases" : True
+                    }
+            config_file.writelines(json.dumps(default_config, indent=2))
+
+# Configuration Logic
+class Configuration:
+    config = {}
+    def __init__(self):
+        # loop variables
+        counter = 1
+        argStore = None
+        # Used to create a config by looking up a dictionary and  executing lambda's instead of if statments
+        args  = {
+                '-h' : lambda config:printHelp(),
+                '-r' : lambda config:config.update({'read':True}),
+                '-w' : lambda config:config.update({'write':True}),
+                '-l' : lambda config:config.update({'letters':True}),
+                '-W' : lambda config:config.update({'words':True}),
+                '-p' : lambda config:config.update({'phrases':True}),
+                '-a' : lambda config:config.update({'letters': True,
+                                             'words':True,
+                                             'phrases':True}),
+                '--setdefault' : lambda config:self.setConfigurationDefaults(config),
+                '-u' : lambda config, name=None:
+                  config.update({'use':name}) if not name == None else False,
+                '--setdefaultlist' : lambda config, name=None:
+                  self.setDefaultList(name) if not name == None else False,
+                }
+
+        # default parameter logic
+        self.config.update(self.getDefaultList())
+        if len(sys.argv) == 3 and sys.argv[1] == "-u":
+            self.config.update(next(self.getConfigurationDefaults))
+        if len(sys.argv) == 1:
+            self.config.update(next(self.getConfigurationDefaults))
+            return
+
+        # loop through args
+        while counter < len(sys.argv):
+            arg = sys.argv[counter]
+            try:
+                # store result of lambda in result
+                result = args.get(arg)(self.config) if argStore == None else args.get(argStore)(self.config,arg)
+                # clear argstore once we are done using the argument
+                argStore = None
+                if not result == None:
+                    # store the current argument if we need it for the next execution
+                    argStore = arg
+            except Exception:
+                print("Invalid argument" + arg)
+                printHelp()
+            counter = counter + 1
+
+    def getConfiguration(self):
+        return self.config
+
+    def getConfigurationDefaults(self) -> dict:
+        content = ""
+        with open(conf_path + "config", 'r') as config_file:
+            content = config_file.read()
+        while True:
+            yield json.loads(content)
+
+    def setConfigurationDefaults(self, config:dict):
+        # ignore -u
+        config.update({self.getDefaultList()})
+        #Save to conf
+        with open(conf_path + "config", "r") as config_file:
+            config_file.writelines(json.dumps(config, indent=2))
+        exit()
+
+    def  getDefaultList(self):
+        default_config = next(self.getConfigurationDefaults)
+        return {"use" : default_config.get("use",None)}
+
+    def setDefaultList(self,name):
+        # get current conf
+        config = next(self.getConfigurationDefaults)
+        config.update({"use":name})
+        with open(conf_path + "config", "w") as config_file:
+            config_file.writelines(json.dumps(config, indent=2))
+        exit()
+
+# Program Logic
+
+# UI Display Logic
+def printHelp():
+    print("help")
+    exit()
+
+def debugOut(out):
+    print(out)
+
+if __name__ == "__main__":
+    main()
