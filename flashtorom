@@ -25,6 +25,8 @@ def main():
                     }
             config_file.writelines(json.dumps(default_config, indent=2))
 
+    config = Configuration()
+
 # Configuration Logic
 class Configuration:
     config = {}
@@ -32,7 +34,8 @@ class Configuration:
         # loop variables
         counter = 1
         argStore = None
-        # Used to create a config by looking up a dictionary and  executing lambda's instead of if statments
+        # Used to create a config by looking up a dictionary and executing lambda's instead of if statments.
+        # A re-invention of the wheel but i like it
         args  = {
                 '-h' : lambda config:printHelp(),
                 '-r' : lambda config:config.update({'read':True}),
@@ -40,14 +43,12 @@ class Configuration:
                 '-l' : lambda config:config.update({'letters':True}),
                 '-W' : lambda config:config.update({'words':True}),
                 '-p' : lambda config:config.update({'phrases':True}),
-                '-a' : lambda config:config.update({'letters': True,
-                                             'words':True,
-                                             'phrases':True}),
+                '-a' : lambda config:config.update({'letters': True, 'words':True, 'phrases':True}),
                 '--setdefault' : lambda config:self.setConfigurationDefaults(config),
                 '-u' : lambda config, name=None:
-                  config.update({'use':name}) if not name == None else False,
+                  config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
-                  self.setDefaultList(name) if not name == None else False,
+                  self.setDefaultList(name) if name is not None else False,
                 }
 
         # default parameter logic
@@ -63,10 +64,10 @@ class Configuration:
             arg = sys.argv[counter]
             try:
                 # store result of lambda in result
-                result = args.get(arg)(self.config) if argStore == None else args.get(argStore)(self.config,arg)
+                result = args.get(arg)(self.config) if argStore is None else args.get(argStore)(self.config,arg)
                 # clear argstore once we are done using the argument
                 argStore = None
-                if not result == None:
+                if result is not None:
                     # store the current argument if we need it for the next execution
                     argStore = arg
             except Exception:
@@ -74,25 +75,80 @@ class Configuration:
                 printHelp()
             counter = counter + 1
 
-    def getConfiguration(self):
+    def getConfiguration(self)->dict:
         return self.config
 
+    # makes a word list
+    def getWordList(self)->dict[str:list:tuple]:
+        words = {"letters" : [], "words" : [], "phrases" : []}
+        current_type = ""
+        list_name = self.config.get("use",None)
+        # Some validation checks for file existance
+        if not list_name == None:
+            if not os.path.exists(conf_path + list_name):
+                print("The wordlist you provided was not found under the config directory")
+                exit()
+
+            with open(conf_path + list_name, "r") as word_list:
+                lines = word_list.readlines()
+
+                # Validation for first line
+                if len(lines) < 1 or lines[0].find("$$") < 0:
+                    print("Wordlist is not well formed.")
+                    print("You require each section to start with $$.")
+                    print("The first line must be a section header. See ReadMe")
+                    exit()
+
+                for line in lines:
+                    potential_pair = line.split("=")
+                    # body of a section case
+                    if len(potential_pair) == 2:
+                        native, learning = potential_pair
+                        native.strip()
+                        learning.strip()
+                        words[current_type].append((native,learning))
+                    # header of a section case
+                    elif len(potential_pair) == 1 and potential_pair[0].find("$$ ") == 0:
+                        # Getting the word (letters, words, phrases) from the heading, standardizing case
+                        current_type = potential_pair[0].split("$$")[0].strip().lower()
+                        # Validating section name
+                        try:
+                            words.get(current_type)
+                        except Exception:
+                            print("Invalid section name: " + current_type)
+                            exit()
+                    # bad body of a section case
+                    elif len(potential_pair) > 2:
+                        print("You have multiple = signs in your wordlist on one line, that is not allowed")
+                        print("This is the problem child: " + line)
+                        exit()
+                    # edge case
+                    else:
+                        print("hmm, this is not supposed to happen. Look at this line")
+                        print(line)
+                        exit()
+        else:
+            print("You need to set your default language, see ReadMe.")
+            exit()
+        return words
+
+    # this is not the best solution, but its a interesting solution
     def getConfigurationDefaults(self) -> dict:
         content = ""
         with open(conf_path + "config", 'r') as config_file:
             content = config_file.read()
+        result = json.loads(content)
         while True:
-            yield json.loads(content)
+            yield result
 
     def setConfigurationDefaults(self, config:dict):
         # ignore -u
-        config.update({self.getDefaultList()})
+        config.update(self.getDefaultList())
         #Save to conf
         with open(conf_path + "config", "r") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
-        exit()
 
-    def  getDefaultList(self):
+    def  getDefaultList(self)->dict:
         default_config = next(self.getConfigurationDefaults)
         return {"use" : default_config.get("use",None)}
 
@@ -105,6 +161,7 @@ class Configuration:
         exit()
 
 # Program Logic
+
 
 # UI Display Logic
 def printHelp():
