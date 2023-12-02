@@ -26,6 +26,7 @@ import os
 import json
 import signal
 import random
+import getpass
 
 conf_path = os.environ.get("XDG_CONFIG_HOME") + "/flashtorom/"
 
@@ -49,7 +50,6 @@ def main():
     with UI() as ui:
         logicLoop = LogicController(config, wordlist, ui)
         logicLoop.loop()
-    print()
 
 # Configuration Logic
 class Configuration:
@@ -76,14 +76,6 @@ class Configuration:
                   self._setDefaultList(name) if name is not None else False,
                 }
 
-        # default parameter logic
-        self.config.update({"use" : self.default_config.get("use",None)})
-        if len(sys.argv) == 3 and sys.argv[1] == "-u":
-            self.config.update(self.default_config)
-        if len(sys.argv) == 1:
-            self.config.update(self.default_config)
-            return
-
         # loop through args
         while counter < len(sys.argv):
             arg = sys.argv[counter]
@@ -100,6 +92,33 @@ class Configuration:
                 printHelp()
             counter = counter + 1
 
+        # default parameter logic
+        selection = [
+            ("letters", self.config.get("letters", None)),
+            ("words", self.config.get("words", None)),
+            ("phrases", self.config.get("phrases", None))
+        ]
+        modes = [
+            ("write", self.config.get("write",None)),
+            ("read", self.config.get("read", None))
+        ]
+        use = [
+            ("use", self.config.get("use", None))
+        ]
+        self.fillMissingParameters(selection)
+        self.fillMissingParameters(modes)
+        self.fillMissingParameters(use)
+
+    def fillMissingParameters(self,args:list[tuple]):
+        KEY = 0
+        VALUE = 1
+        isNone = lambda x: True if x is None else False 
+        for arg in args:
+            if not isNone(arg[VALUE]):
+                return
+        for arg in args:
+            self.config.update({arg[KEY] : self.default_config.get(arg[KEY], None)})
+
     def getConfiguration(self)->dict:
         return self.config
 
@@ -113,7 +132,6 @@ class Configuration:
             if not os.path.exists(conf_path + list_name):
                 print("The wordlist you provided was not found under the config directory")
                 exit()
-
             with open(conf_path + list_name, "r") as word_list:
                 lines = word_list.readlines()
 
@@ -129,11 +147,11 @@ class Configuration:
                     # body of a section case
                     if len(potential_pair) == 2:
                         native, learning = potential_pair
-                        native.strip()
-                        learning.strip()
+                        native = native.strip()
+                        learning = learning.strip()
                         words[current_type].append((native,learning))
                     # header of a section case
-                    elif len(potential_pair) == 1 and potential_pair[0].find("$$ ") == 0:
+                    elif len(potential_pair) == 1 and potential_pair[0].find("$$") == 0:
                         # Getting the word (letters, words, phrases) from the heading, standardizing case
                         current_type = potential_pair[0].split("$$")[1].strip().lower()
                         # Validating section name
@@ -168,7 +186,7 @@ class Configuration:
         # TODO: ignore -u
         config.update({"use" : self.default_config.get("use",None)})
         #Save to conf
-        with open(conf_path + "config", "r") as config_file:
+        with open(conf_path + "config", "w") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
 
     def _setDefaultList(self,name):
@@ -188,6 +206,8 @@ class Configuration:
 # UI Display Logic
 def printHelp():
     print(""" FlashToROM (for your brain not your device)
+    flashtorom --setdefaultlist <listname>
+    flashtorom [-r -w -l -W -p -a -u <listname>] [--setdefault]
 -h (help) : Prints this menu and leaves
 -r (read) : Flash a phrase/letter/word of the language you are
             learning and you need to guess the corresponding
@@ -246,6 +266,7 @@ class UI:
         return self
     def __exit__(self, exc_type, exc_value, traceback):
         print("\033[?25h")
+        print("\033c", end="")
 
     # resize event
     def _resize_signal_event(self, signum, frame):
@@ -273,7 +294,10 @@ class UI:
     def _write_cli_to_buffer(self, title, question, answer):
         self.buffer.append(title+"\n")
         self.buffer.append(question+"\n")
-        self.buffer.append(answer+"\n") if self.answer_visible else None
+        if self.answer_visible:
+            self.buffer.append("Answer: "+answer+"\n") 
+        else: 
+            self.buffer.append("Answer: " + '█' * len(answer) +"\n")
 
     # Uses a more visually interesting UI
     def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
@@ -287,7 +311,7 @@ class UI:
 
     # Moves cursor in terminal. Used for constructing TUI
     def _move_cursor(self, x, y):
-        self.buffer.append(f'\033[{y};{x}H')
+        self.buffer.append(f'\033[{y};{x}H\033[?25l')
 
 # Program Logic
 # Manages what UI displays, configures logic loops and then starts program
@@ -304,7 +328,7 @@ class LogicController:
         if config.get("write",False):
             self.read_write.append("write")
         self.ui = interface
-        self.language = config.get("use","default")
+        self.language = config.get("use")
 
     def loop(self):
         try:
@@ -313,18 +337,18 @@ class LogicController:
                 native,learning = random.choice(self.wordlist[random_type])
                 random_mode:str = random.choice(self.read_write)
                 if random_mode == "read":
-                    if random_type == "letter":
+                    if random_type == "letters":
                         self.ui.set_question("What does the following letter sound like?", learning, native)
                     else:
-                        self.ui.set_question("What does the following " + random_type + " mean?", learning, native)
+                        self.ui.set_question("What does the following " + random_type[:len(random_type)-1] + " mean?", learning, native)
                 else:
-                    if random_type == "letter":
+                    if random_type == "letters":
                         self.ui.set_question("Write the following sound/letter." ,native, learning)
                     else:
-                        self.ui.set_question("Write the following " + random_type + ".", native, learning)
-                input()
+                        self.ui.set_question("Write the following " + random_type[:len(random_type)-1] + ".", native, learning)
+                getpass.getpass()
                 self.ui.toggle_answer_visibility()
-                input()
+                getpass.getpass()
 
         except KeyboardInterrupt:
             pass
