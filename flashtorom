@@ -242,6 +242,8 @@ class UI:
         print("\033[?25l")
         # updates terminal dimentions on resize
         signal.signal(signal.SIGWINCH, self._resize_signal_event)
+    def __enter__(self):
+        return self
     def __exit__(self, exc_type, exc_value, traceback):
         print("\033[?25h")
 
