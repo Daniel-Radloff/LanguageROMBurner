@@ -182,7 +182,26 @@ class Configuration:
 
 # UI Display Logic
 def printHelp():
-    print("help")
+    print(""" FlashToROM (for your brain not your device)
+-h (help) : Prints this menu and leaves
+-r (read) : Flash a phrase/letter/word of the language you are
+            learning and you need to guess the corresponding
+            meaning/pronounciation.
+-w (write): Flash the phrase/letter/word of your native language
+            and you need to write it out on paper and compare.
+-l (letters) : Use the letters section of your wordlist.
+-W (words) : Use the words section of your wordlist.
+-p (phrases) : Use the phrases section of your wordlist.
+-a (all) : Use everything under letters and words and
+            phrases in your wordlist.
+-u (use) : Use a specified list. Use just the name of the list
+            without any path, list must be in the config directory.
+--setdefault : Set the default behavior of the program called with
+            no commands to the commands that you specify now.
+            NOTE: this ignores the -u/--use flag.
+--setdefaultlist <listname> : sets the list you provide to the
+            default list that the program uses.
+          """)
     exit()
 
 def debugOut(out):
