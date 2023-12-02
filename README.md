@@ -24,8 +24,8 @@ I have embarked on a journey to learn Hindi. To do this I use duolingo however l
 
 The way that you are supposed to use this app is for letters however I've extended its applicable functionality slightly. In any mode the usage is indended to work similarly. I suggest slowly extending your wordlist so that you can properly learn stuff instead of throwing yourself into the deep end of things.
 There are two main modes:
-1. `-r --read`
-2. `-w --write`
+1. `-r (read)`
+2. `-w (write)`
 
 Read will provide you with the language you are learnings phrase/letter/word in the spelling of that language that you configured from your wordlist. You must then try to think of the sound or meaning in your native language. Once your hit enter it will show the correct answer that you configured and when you hit enter again it will clear the screen and pick a new random phrase/letter/word from your list.
 
@@ -90,20 +90,18 @@ All your Letters go under Letters etc etc.
 
 You can add as many flags/modes as you want. You can have read, write, letters, words, and phrases all active at once for instane. You can also configure default behavior to use these flags etc.
 ```
--h --help : Prints this menu and leaves
--r --read : Flash a phrase/letter/word of the language you are
+-h (help) : Prints this menu and leaves
+-r (read) : Flash a phrase/letter/word of the language you are
             learning and you need to guess the corresponding
             meaning/pronounciation.
--w --write: Flash the phrase/letter/word of your native language
+-w (write): Flash the phrase/letter/word of your native language
             and you need to write it out on paper and compare.
--l --letters : Use the letters section of your wordlist.
--W --words : Use the words section of your wordlist.
--p --phrases : Use the phrases section of your wordlist.
--a --all : Use everything under words and phrases in your
-            wordlist.
--A --allSections : Use everything under letters and words and
+-l (letters) : Use the letters section of your wordlist.
+-W (words) : Use the words section of your wordlist.
+-p (phrases) : Use the phrases section of your wordlist.
+-a (all) : Use everything under letters and words and
             phrases in your wordlist.
--u --use : Use a specified list. Use just the name of the list
+-u (use) : Use a specified list. Use just the name of the list
             without any path, list must be in the config directory.
 --setdefault : Set the default behavior of the program called with
             no commands to the commands that you specify now.
