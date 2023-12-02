@@ -27,7 +27,7 @@ import json
 import signal
 import random
 
-conf_path = os.environ.get("HOME") + ".config/flashtorom/"
+conf_path = os.environ.get("HOME") + "/.config/flashtorom/"
 
 def main():
     if not os.path.exists(conf_path + "config"):
@@ -56,6 +56,7 @@ class Configuration:
     config = {}
     def __init__(self):
         # loop variables
+        self.default_config = self._getConfigurationDefaults()
         counter = 1
         argStore = None
         # Used to create a config by looking up a dictionary and executing lambda's instead of if statments.
@@ -72,15 +73,15 @@ class Configuration:
                 '-u' : lambda config, name=None:
                   config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
-                  self._setDefaultList(name) if name is not None else False,
+                  self._setDefaultList(name,config) if name is not None else False,
                 }
 
         # default parameter logic
-        self.config.update(self._getDefaultList())
+        self.config.update({"use" : self.default_config.get("use",None)})
         if len(sys.argv) == 3 and sys.argv[1] == "-u":
-            self.config.update(next(self.getConfigurationDefaults))
+            self.config.update(self.default_config)
         if len(sys.argv) == 1:
-            self.config.update(next(self.getConfigurationDefaults))
+            self.config.update(self.default_config)
             return
 
         # loop through args
@@ -161,24 +162,17 @@ class Configuration:
         content = ""
         with open(conf_path + "config", 'r') as config_file:
             content = config_file.read()
-        result = json.loads(content)
-        while True:
-            yield result
+        return json.loads(content)
 
     def _setConfigurationDefaults(self, config:dict):
-        # ignore -u
-        config.update(self._getDefaultList())
+        # TODO: ignore -u
+
         #Save to conf
         with open(conf_path + "config", "r") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
 
-    def _getDefaultList(self)->dict:
-        default_config = next(self._getConfigurationDefaults)
-        return {"use" : default_config.get("use",None)}
-
-    def _setDefaultList(self,name):
+    def _setDefaultList(self,name,config:dict):
         # get current conf
-        config = next(self._getConfigurationDefaults)
         config.update({"use":name})
         with open(conf_path + "config", "w") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
