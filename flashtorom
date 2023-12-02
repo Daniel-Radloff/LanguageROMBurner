@@ -166,16 +166,20 @@ class Configuration:
 
     def _setConfigurationDefaults(self, config:dict):
         # TODO: ignore -u
-
+        config.update({"use" : self.default_config.get("use",None)})
         #Save to conf
         with open(conf_path + "config", "r") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
 
     def _setDefaultList(self,name,config:dict):
-        # get current conf
+        if not os.path.exists(conf_path + "name"):
+            print("The wordlist you provided does not exist under: " + conf_path)
+            print("Please create it and put in some initial values and run the command again")
+            exit()
         config.update({"use":name})
         with open(conf_path + "config", "w") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
+        print("Default list set")
         exit()
 
 
