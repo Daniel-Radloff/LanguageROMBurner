@@ -8,6 +8,7 @@
 import sys
 import os
 import json
+import signal
 
 conf_path = os.environ.get("HOME") + ".config/flashtorom/"
 
@@ -26,6 +27,8 @@ def main():
             config_file.writelines(json.dumps(default_config, indent=2))
 
     config = Configuration()
+    wordlist = config.getWordList()
+    config = config.getConfiguration()
 
 # Configuration Logic
 class Configuration:
@@ -44,15 +47,15 @@ class Configuration:
                 '-W' : lambda config:config.update({'words':True}),
                 '-p' : lambda config:config.update({'phrases':True}),
                 '-a' : lambda config:config.update({'letters': True, 'words':True, 'phrases':True}),
-                '--setdefault' : lambda config:self.setConfigurationDefaults(config),
+                '--setdefault' : lambda config:self._setConfigurationDefaults(config),
                 '-u' : lambda config, name=None:
                   config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
-                  self.setDefaultList(name) if name is not None else False,
+                  self._setDefaultList(name) if name is not None else False,
                 }
 
         # default parameter logic
-        self.config.update(self.getDefaultList())
+        self.config.update(self._getDefaultList())
         if len(sys.argv) == 3 and sys.argv[1] == "-u":
             self.config.update(next(self.getConfigurationDefaults))
         if len(sys.argv) == 1:
@@ -84,7 +87,7 @@ class Configuration:
         current_type = ""
         list_name = self.config.get("use",None)
         # Some validation checks for file existance
-        if not list_name == None:
+        if list_name is not None:
             if not os.path.exists(conf_path + list_name):
                 print("The wordlist you provided was not found under the config directory")
                 exit()
@@ -128,12 +131,12 @@ class Configuration:
                         print(line)
                         exit()
         else:
-            print("You need to set your default language, see ReadMe.")
+            print("You need to set your default language/word list, see ReadMe.")
             exit()
         return words
 
     # this is not the best solution, but its a interesting solution
-    def getConfigurationDefaults(self) -> dict:
+    def _getConfigurationDefaults(self) -> dict:
         content = ""
         with open(conf_path + "config", 'r') as config_file:
             content = config_file.read()
@@ -141,20 +144,20 @@ class Configuration:
         while True:
             yield result
 
-    def setConfigurationDefaults(self, config:dict):
+    def _setConfigurationDefaults(self, config:dict):
         # ignore -u
-        config.update(self.getDefaultList())
+        config.update(self._getDefaultList())
         #Save to conf
         with open(conf_path + "config", "r") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
 
-    def  getDefaultList(self)->dict:
-        default_config = next(self.getConfigurationDefaults)
+    def _getDefaultList(self)->dict:
+        default_config = next(self._getConfigurationDefaults)
         return {"use" : default_config.get("use",None)}
 
-    def setDefaultList(self,name):
+    def _setDefaultList(self,name):
         # get current conf
-        config = next(self.getConfigurationDefaults)
+        config = next(self._getConfigurationDefaults)
         config.update({"use":name})
         with open(conf_path + "config", "w") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
@@ -170,6 +173,76 @@ def printHelp():
 
 def debugOut(out):
     print(out)
+
+# Contains all the UI display logic availible methods are:
+# 1. set_question(title,question,answer) which makes a dialogue with answer hidden.
+# 2. toggle_answer_visibility() changes visibility of answer.
+class UI:
+    buffer = []
+    answer_visible = False
+
+
+    # Sets Question information, resets answer visibilty to false, display question
+    def set_question(self,title,question,answer):
+        self.title = title
+        self.question = question
+        self.answer = answer
+        self.answer_visible = False
+        self._redraw()
+
+    # Toggles visibilty of answer, redraws
+    def toggle_answer_visibility(self):
+        self.answer_visible = not self.answer_visible
+        self._redraw()
+
+    def __init__(self):
+        self.columns, self.rows = os.get_terminal_size()
+        self.title = ""
+        self.question = ""
+        self.answer = ""
+        # updates terminal dimentions on resize
+        signal.signal(signal.SIGWINCH, self._resize_signal_event)
+
+    # resize event
+    def _resize_signal_event(self, signum, frame):
+        self.columns, self.rows = os.get_terminal_size()
+        self._redraw()
+
+    # goes through buffer and draws out everything.
+    # Newlines must be placed in strings
+    def _redraw(self):
+        self.buffer = []
+        self._set_buffer()
+        #clear
+        print("\033c", end="")
+        #read buffer
+        for instruction in self.buffer:
+            print(instruction, end="")
+
+    # For now this just calls cli function but in future might
+    # Be able to switch between CLI and TUI
+    def _set_buffer(self):
+        self._write_cli_to_buffer(self.title, self.question, self.answer)
+
+    # CLI simple interactive line by line
+    def _write_cli_to_buffer(self, title, question, answer):
+        self.buffer.append(title)
+        self.buffer.append(question)
+        self.buffer.append(answer) if self.answer_visible else None
+
+    # Uses a more visually interesting UI
+    def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
+        # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
+        return
+
+    # Determines width of text so that it can be centered properly
+    def _text_width(self, text:str)->tuple:
+        # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
+        return
+
+    # Moves cursor in terminal. Used for constructing TUI
+    def _move_cursor(self, x, y):
+        self.buffer.append(f'\033[{y};{x}H')
 
 if __name__ == "__main__":
     main()
