@@ -27,11 +27,11 @@ import json
 import signal
 import random
 
-conf_path = os.environ.get("HOME") + "/.config/flashtorom/"
+conf_path = os.environ.get("XDG_CONFIG_HOME") + "/flashtorom/"
 
 def main():
     if not os.path.exists(conf_path + "config"):
-        os.makedirs(conf_path)
+        os.makedirs(conf_path, exist_ok=True)
 
         with open(conf_path + "config", "w") as config_file:
             default_config = {
@@ -73,7 +73,7 @@ class Configuration:
                 '-u' : lambda config, name=None:
                   config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
-                  self._setDefaultList(name,config) if name is not None else False,
+                  self._setDefaultList(name) if name is not None else False,
                 }
 
         # default parameter logic
@@ -171,11 +171,12 @@ class Configuration:
         with open(conf_path + "config", "r") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
 
-    def _setDefaultList(self,name,config:dict):
-        if not os.path.exists(conf_path + "name"):
+    def _setDefaultList(self,name):
+        if not os.path.exists(conf_path + name):
             print("The wordlist you provided does not exist under: " + conf_path)
             print("Please create it and put in some initial values and run the command again")
             exit()
+        config = self.default_config
         config.update({"use":name})
         with open(conf_path + "config", "w") as config_file:
             config_file.writelines(json.dumps(config, indent=2))
