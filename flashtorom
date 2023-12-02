@@ -1,4 +1,20 @@
 #!/usr/bin/python3
+#  Flashes cards so you can practice languages
+#  Copyright (C) 2023  Mokeysurfer
+
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # File has 3 parts (Very very losely MVC not really):
 # 1. Config Logic: Argument handling, .config directory setup, initialization
 # 2. Program Logic: Phrase Selection, View control, Program Loop
@@ -9,6 +25,7 @@ import sys
 import os
 import json
 import signal
+import random
 
 conf_path = os.environ.get("HOME") + ".config/flashtorom/"
 
@@ -29,6 +46,10 @@ def main():
     config = Configuration()
     wordlist = config.getWordList()
     config = config.getConfiguration()
+    ui = UI()
+    logicLoop = LogicController(config, wordlist, ui)
+    logicLoop.loop()
+    print()
 
 # Configuration Logic
 class Configuration:
@@ -163,7 +184,6 @@ class Configuration:
             config_file.writelines(json.dumps(config, indent=2))
         exit()
 
-# Program Logic
 
 
 # UI Display Logic
@@ -178,6 +198,7 @@ def debugOut(out):
 # 1. set_question(title,question,answer) which makes a dialogue with answer hidden.
 # 2. toggle_answer_visibility() changes visibility of answer.
 class UI:
+    # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
     buffer = []
     answer_visible = False
 
@@ -223,12 +244,13 @@ class UI:
     # Be able to switch between CLI and TUI
     def _set_buffer(self):
         self._write_cli_to_buffer(self.title, self.question, self.answer)
+        self._move_cursor(3,3)
 
     # CLI simple interactive line by line
     def _write_cli_to_buffer(self, title, question, answer):
-        self.buffer.append(title)
-        self.buffer.append(question)
-        self.buffer.append(answer) if self.answer_visible else None
+        self.buffer.append(title+"\n")
+        self.buffer.append(question+"\n")
+        self.buffer.append(answer+"\n") if self.answer_visible else None
 
     # Uses a more visually interesting UI
     def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
@@ -243,6 +265,47 @@ class UI:
     # Moves cursor in terminal. Used for constructing TUI
     def _move_cursor(self, x, y):
         self.buffer.append(f'\033[{y};{x}H')
+
+# Program Logic
+# Manages what UI displays, configures logic loops and then starts program
+class LogicController:
+    wordlist = {}
+    read_write = []
+    def __init__(self, config:dict, wordlist:dict[str:list], interface:UI):
+        for key,value in wordlist:
+            if config.get(key,False):
+                if len(value) > 0:
+                    self.wordlist.update({key:value})
+        if config.get("read",False):
+            self.read_write.append("read")
+        if config.get("write",False):
+            self.read_write.append("write")
+        self.ui = interface
+        self.language = config.get("use","default")
+
+    def loop(self):
+        try:
+            while True:
+                random_type:str = random.choice(self.wordlist.keys())
+                native,learning = random.choice(self.wordlist[random_type])
+                random_mode:str = random.choice(self.read_write)
+                if random_mode == "read":
+                    if random_type == "letter":
+                        self.ui.set_question("What does the following letter sound like?", learning, native)
+                    else:
+                        self.ui.set_question("What does the following " + random_type + " mean?", learning, native)
+                else:
+                    if random_type == "letter":
+                        self.ui.set_question("Write the following sound/letter." ,native, learning)
+                    else:
+                        self.ui.set_question("Write the following " + random_type + ".", native, learning)
+                input()
+                self.ui.toggle_answer_visibility()
+                input()
+
+        except KeyboardInterrupt():
+            pass
+        pass
 
 if __name__ == "__main__":
     main()
