@@ -27,6 +27,7 @@ import json
 import signal
 import random
 import getpass
+import curses
 
 conf_path = os.environ.get("XDG_CONFIG_HOME") + "/flashtorom/"
 
@@ -47,7 +48,11 @@ def main():
     config = Configuration()
     wordlist = config.getWordList()
     config = config.getConfiguration()
-    with UI() as ui:
+    stdscr = lambda scr:start_interface(scr,config,wordlist)
+    curses.wrapper(stdscr)
+
+def start_interface(stdscr,config, wordlist):
+    with UI(stdscr) as ui:
         logicLoop = LogicController(config, wordlist, ui)
         logicLoop.loop()
 
@@ -112,7 +117,7 @@ class Configuration:
     def fillMissingParameters(self,args:list[tuple]):
         KEY = 0
         VALUE = 1
-        isNone = lambda x: True if x is None else False 
+        isNone = lambda x: True if x is None else False
         for arg in args:
             if not isNone(arg[VALUE]):
                 return
@@ -237,11 +242,33 @@ def debugOut(out):
 # 2. toggle_answer_visibility() changes visibility of answer.
 class UI:
     # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
-    buffer = []
     answer_visible = False
 
+    def __init__(self,stdscr:curses.window):
+        self.columns, self.rows = os.get_terminal_size()
+        self.title = ""
+        self.question = ""
+        self.answer = ""
+        self.scr = stdscr
+        self.buffer = Buffer()
+        # updates terminal dimentions on resize
+        signal.signal(signal.SIGWINCH, self._resize_signal_event)
+    def __enter__(self):
+        curses.curs_set(0)
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        curses.curs_set(1)
+        print("\033c", end="")
 
     # Sets Question information, resets answer visibilty to false, display question
+    def flash(self):
+        #TODO: depending on mode change cursor position
+        self.scr.getch()
+        #self._capture_output()
+        self.toggle_answer_visibility()
+        self.scr.getch()
+        #self._capture_output()
+
     def set_question(self,title,question,answer):
         self.title = title
         self.question = question
@@ -254,50 +281,42 @@ class UI:
         self.answer_visible = not self.answer_visible
         self._redraw()
 
-    def __init__(self):
-        self.columns, self.rows = os.get_terminal_size()
-        self.title = ""
-        self.question = ""
-        self.answer = ""
-        print("\033[?25l")
-        # updates terminal dimentions on resize
-        signal.signal(signal.SIGWINCH, self._resize_signal_event)
-    def __enter__(self):
-        return self
-    def __exit__(self, exc_type, exc_value, traceback):
-        print("\033[?25h")
-        print("\033c", end="")
 
     # resize event
     def _resize_signal_event(self, signum, frame):
-        self.columns, self.rows = os.get_terminal_size()
+        self.rows, self.columns = self.scr.getmaxyx()
         self._redraw()
 
     # goes through buffer and draws out everything.
     # Newlines must be placed in strings
     def _redraw(self):
-        self.buffer = []
+        # Buffer indexes
+        Y = 0
+        X = 1
+        STRING = 2
+
+        self.buffer.clear_buffer()
         self._set_buffer()
-        #clear
-        print("\033c", end="")
+        self.scr.clear()
         #read buffer
-        for instruction in self.buffer:
-            print(instruction, end="")
+        buffer = self.buffer.get_buffer()
+        for instruction in buffer:
+            self.scr.addstr(instruction[Y], instruction[X], instruction[STRING])
+        self.scr.refresh()
 
     # For now this just calls cli function but in future might
     # Be able to switch between CLI and TUI
     def _set_buffer(self):
         self._write_cli_to_buffer(self.title, self.question, self.answer)
-        self._move_cursor(3,3)
 
     # CLI simple interactive line by line
     def _write_cli_to_buffer(self, title, question, answer):
-        self.buffer.append(title+"\n")
-        self.buffer.append(question+"\n")
+        self.buffer.print_at_position(0,0,title)
+        self.buffer.print_at_position(1,0, question)
         if self.answer_visible:
-            self.buffer.append("Answer: "+answer+"\n") 
-        else: 
-            self.buffer.append("Answer: " + '█' * len(answer) +"\n")
+            self.buffer.print_at_position(2, 0, "Answer: "+answer)
+        else:
+            self.buffer.print_at_position(2, 0, "Answer: " + '█' * len(answer))
 
     # Uses a more visually interesting UI
     def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
@@ -310,8 +329,14 @@ class UI:
         return
 
     # Moves cursor in terminal. Used for constructing TUI
-    def _move_cursor(self, x, y):
-        self.buffer.append(f'\033[{y};{x}H\033[?25l')
+class Buffer:
+    _buffer = []
+    def print_at_position(self, y:int, x:int, toprint:str)->tuple:
+        self._buffer.append((y,x,toprint))
+    def get_buffer(self)->list:
+        return self._buffer
+    def clear_buffer(self):
+        self._buffer = []
 
 # Program Logic
 # Manages what UI displays, configures logic loops and then starts program
@@ -346,9 +371,7 @@ class LogicController:
                         self.ui.set_question("Write the following sound/letter." ,native, learning)
                     else:
                         self.ui.set_question("Write the following " + random_type[:len(random_type)-1] + ".", native, learning)
-                getpass.getpass()
-                self.ui.toggle_answer_visibility()
-                getpass.getpass()
+                self.ui.flash()
 
         except KeyboardInterrupt:
             pass
