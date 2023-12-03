@@ -1,0 +1,383 @@
+#!/usr/bin/python3
+#  Flashes cards so you can practice languages
+#  Copyright (C) 2023  Mokeysurfer
+
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# File has 3 parts (Very very losely MVC not really):
+# 1. Config Logic: Argument handling, .config directory setup, initialization
+# 2. Program Logic: Phrase Selection, View control, Program Loop
+# 3. View Logic: TUI interface, display logic, display functions
+# Everything is going to be contained in one file because the goal is for setup to be as easy as possible.
+#    This is not meant to be super complex its just a simple application.
+import sys
+import os
+import json
+import signal
+import random
+import getpass
+import curses
+
+conf_path = os.environ.get("XDG_CONFIG_HOME") + "/flashtorom/"
+
+def main():
+    if not os.path.exists(conf_path + "config"):
+        os.makedirs(conf_path, exist_ok=True)
+
+        with open(conf_path + "config", "w") as config_file:
+            default_config = {
+                    "read" : True,
+                    "write" : True,
+                    "letters" : True,
+                    "words" : True,
+                    "phrases" : True
+                    }
+            config_file.writelines(json.dumps(default_config, indent=2))
+
+    config = Configuration()
+    wordlist = config.getWordList()
+    config = config.getConfiguration()
+    stdscr = lambda scr:start_interface(scr,config,wordlist)
+    curses.wrapper(stdscr)
+
+def start_interface(stdscr,config, wordlist):
+    with UI(stdscr) as ui:
+        logicLoop = LogicController(config, wordlist, ui)
+        logicLoop.loop()
+
+# Configuration Logic
+class Configuration:
+    config = {}
+    def __init__(self):
+        # loop variables
+        self.default_config = self._getConfigurationDefaults()
+        counter = 1
+        argStore = None
+        # Used to create a config by looking up a dictionary and executing lambda's instead of if statments.
+        # A re-invention of the wheel but i like it
+        args  = {
+                '-h' : lambda config:printHelp(),
+                '-r' : lambda config:config.update({'read':True}),
+                '-w' : lambda config:config.update({'write':True}),
+                '-l' : lambda config:config.update({'letters':True}),
+                '-W' : lambda config:config.update({'words':True}),
+                '-p' : lambda config:config.update({'phrases':True}),
+                '-a' : lambda config:config.update({'letters': True, 'words':True, 'phrases':True}),
+                '--setdefault' : lambda config:self._setConfigurationDefaults(config),
+                '-u' : lambda config, name=None:
+                  config.update({'use':name}) if name is not None else False,
+                '--setdefaultlist' : lambda config, name=None:
+                  self._setDefaultList(name) if name is not None else False,
+                }
+
+        # loop through args
+        while counter < len(sys.argv):
+            arg = sys.argv[counter]
+            try:
+                # store result of lambda in result
+                result = args.get(arg)(self.config) if argStore is None else args.get(argStore)(self.config,arg)
+                # clear argstore once we are done using the argument
+                argStore = None
+                if result is not None:
+                    # store the current argument if we need it for the next execution
+                    argStore = arg
+            except Exception:
+                print("Invalid argument" + arg)
+                printHelp()
+            counter = counter + 1
+
+        # default parameter logic
+        selection = [
+            ("letters", self.config.get("letters", None)),
+            ("words", self.config.get("words", None)),
+            ("phrases", self.config.get("phrases", None))
+        ]
+        modes = [
+            ("write", self.config.get("write",None)),
+            ("read", self.config.get("read", None))
+        ]
+        use = [
+            ("use", self.config.get("use", None))
+        ]
+        self.fillMissingParameters(selection)
+        self.fillMissingParameters(modes)
+        self.fillMissingParameters(use)
+
+    def fillMissingParameters(self,args:list[tuple]):
+        KEY = 0
+        VALUE = 1
+        isNone = lambda x: True if x is None else False
+        for arg in args:
+            if not isNone(arg[VALUE]):
+                return
+        for arg in args:
+            self.config.update({arg[KEY] : self.default_config.get(arg[KEY], None)})
+
+    def getConfiguration(self)->dict:
+        return self.config
+
+    # makes a word list
+    def getWordList(self)->dict[str:list:tuple]:
+        words = {"letters" : [], "words" : [], "phrases" : []}
+        current_type = ""
+        list_name = self.config.get("use",None)
+        # Some validation checks for file existance
+        if list_name is not None:
+            if not os.path.exists(conf_path + list_name):
+                print("The wordlist you provided was not found under the config directory")
+                exit()
+            with open(conf_path + list_name, "r") as word_list:
+                lines = word_list.readlines()
+
+                # Validation for first line
+                if len(lines) < 1 or lines[0].find("$$") < 0:
+                    print("Wordlist is not well formed.")
+                    print("You require each section to start with $$.")
+                    print("The first line must be a section header. See ReadMe")
+                    exit()
+
+                for line in lines:
+                    potential_pair = line.split("=")
+                    # body of a section case
+                    if len(potential_pair) == 2:
+                        native, learning = potential_pair
+                        native = native.strip()
+                        learning = learning.strip()
+                        words[current_type].append((native,learning))
+                    # header of a section case
+                    elif len(potential_pair) == 1 and potential_pair[0].find("$$") == 0:
+                        # Getting the word (letters, words, phrases) from the heading, standardizing case
+                        current_type = potential_pair[0].split("$$")[1].strip().lower()
+                        # Validating section name
+                        try:
+                            words[current_type]
+                        except Exception:
+                            print("Invalid section name: " + current_type)
+                            exit()
+                    # bad body of a section case
+                    elif len(potential_pair) > 2:
+                        print("You have multiple = signs in your wordlist on one line, that is not allowed")
+                        print("This is the problem child: " + line)
+                        exit()
+                    # edge case
+                    else:
+                        print("hmm, this is not supposed to happen. Look at this line")
+                        print(line)
+                        exit()
+        else:
+            print("You need to set your default language/word list, see ReadMe.")
+            exit()
+        return words
+
+    # this is not the best solution, but its a interesting solution
+    def _getConfigurationDefaults(self) -> dict:
+        content = ""
+        with open(conf_path + "config", 'r') as config_file:
+            content = config_file.read()
+        return json.loads(content)
+
+    def _setConfigurationDefaults(self, config:dict):
+        # TODO: ignore -u
+        config.update({"use" : self.default_config.get("use",None)})
+        #Save to conf
+        with open(conf_path + "config", "w") as config_file:
+            config_file.writelines(json.dumps(config, indent=2))
+
+    def _setDefaultList(self,name):
+        if not os.path.exists(conf_path + name):
+            print("The wordlist you provided does not exist under: " + conf_path)
+            print("Please create it and put in some initial values and run the command again")
+            exit()
+        config = self.default_config
+        config.update({"use":name})
+        with open(conf_path + "config", "w") as config_file:
+            config_file.writelines(json.dumps(config, indent=2))
+        print("Default list set")
+        exit()
+
+
+
+# UI Display Logic
+def printHelp():
+    print(""" FlashToROM (for your brain not your device)
+    flashtorom --setdefaultlist <listname>
+    flashtorom [-r -w -l -W -p -a -u <listname>] [--setdefault]
+-h (help) : Prints this menu and leaves
+-r (read) : Flash a phrase/letter/word of the language you are
+            learning and you need to guess the corresponding
+            meaning/pronounciation.
+-w (write): Flash the phrase/letter/word of your native language
+            and you need to write it out on paper and compare.
+-l (letters) : Use the letters section of your wordlist.
+-W (words) : Use the words section of your wordlist.
+-p (phrases) : Use the phrases section of your wordlist.
+-a (all) : Use everything under letters and words and
+            phrases in your wordlist.
+-u (use) : Use a specified list. Use just the name of the list
+            without any path, list must be in the config directory.
+--setdefault : Set the default behavior of the program called with
+            no commands to the commands that you specify now.
+            NOTE: this ignores the -u/--use flag.
+--setdefaultlist <listname> : sets the list you provide to the
+            default list that the program uses.
+          """)
+    exit()
+
+def debugOut(out):
+    print(out)
+
+# Contains all the UI display logic availible methods are:
+# 1. set_question(title,question,answer) which makes a dialogue with answer hidden.
+# 2. toggle_answer_visibility() changes visibility of answer.
+class UI:
+    # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
+    answer_visible = False
+
+    def __init__(self,stdscr:curses.window):
+        self.columns, self.rows = os.get_terminal_size()
+        self.title = ""
+        self.question = ""
+        self.answer = ""
+        self.scr = stdscr
+        self.buffer = Buffer()
+        # updates terminal dimentions on resize
+        signal.signal(signal.SIGWINCH, self._resize_signal_event)
+    def __enter__(self):
+        curses.curs_set(0)
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        curses.curs_set(1)
+        print("\033c", end="")
+
+    # Sets Question information, resets answer visibilty to false, display question
+    def flash(self):
+        #TODO: depending on mode change cursor position
+        self.scr.getch()
+        #self._capture_output()
+        self.toggle_answer_visibility()
+        self.scr.getch()
+        #self._capture_output()
+
+    def set_question(self,title,question,answer):
+        self.title = title
+        self.question = question
+        self.answer = answer
+        self.answer_visible = False
+        self._redraw()
+
+    # Toggles visibilty of answer, redraws
+    def toggle_answer_visibility(self):
+        self.answer_visible = not self.answer_visible
+        self._redraw()
+
+
+    # resize event
+    def _resize_signal_event(self, signum, frame):
+        self.rows, self.columns = self.scr.getmaxyx()
+        self._redraw()
+
+    # goes through buffer and draws out everything.
+    # Newlines must be placed in strings
+    def _redraw(self):
+        # Buffer indexes
+        Y = 0
+        X = 1
+        STRING = 2
+
+        self.buffer.clear_buffer()
+        self._set_buffer()
+        self.scr.clear()
+        #read buffer
+        buffer = self.buffer.get_buffer()
+        for instruction in buffer:
+            self.scr.addstr(instruction[Y], instruction[X], instruction[STRING])
+        self.scr.refresh()
+
+    # For now this just calls cli function but in future might
+    # Be able to switch between CLI and TUI
+    def _set_buffer(self):
+        self._write_cli_to_buffer(self.title, self.question, self.answer)
+
+    # CLI simple interactive line by line
+    def _write_cli_to_buffer(self, title, question, answer):
+        self.buffer.print_at_position(0,0,title)
+        self.buffer.print_at_position(1,0, question)
+        if self.answer_visible:
+            self.buffer.print_at_position(2, 0, "Answer: "+answer)
+        else:
+            self.buffer.print_at_position(2, 0, "Answer: " + '█' * len(answer))
+
+    # Uses a more visually interesting UI
+    def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
+        # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
+        return
+
+    # Determines width of text so that it can be centered properly
+    def _text_width(self, text:str)->tuple:
+        # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
+        return
+
+    # Moves cursor in terminal. Used for constructing TUI
+class Buffer:
+    _buffer = []
+    def print_at_position(self, y:int, x:int, toprint:str)->tuple:
+        self._buffer.append((y,x,toprint))
+    def get_buffer(self)->list:
+        return self._buffer
+    def clear_buffer(self):
+        self._buffer = []
+
+# Program Logic
+# Manages what UI displays, configures logic loops and then starts program
+class LogicController:
+    wordlist = {}
+    read_write = []
+    def __init__(self, config:dict, wordlist:dict[str:list], interface:UI):
+        for key,value in wordlist.items():
+            if config.get(key,False):
+                if len(value) > 0:
+                    self.wordlist.update({key:value})
+        if config.get("read",False):
+            self.read_write.append("read")
+        if config.get("write",False):
+            self.read_write.append("write")
+        self.ui = interface
+        self.language = config.get("use")
+
+    def loop(self):
+        try:
+            while True:
+                random_type:str = random.choice(list(self.wordlist.keys()))
+                native,learning = random.choice(self.wordlist[random_type])
+                random_mode:str = random.choice(self.read_write)
+                if random_mode == "read":
+                    if random_type == "letters":
+                        self.ui.set_question("What does the following letter sound like?", learning, native)
+                    else:
+                        self.ui.set_question("What does the following " + random_type[:len(random_type)-1] + " mean?", learning, native)
+                else:
+                    if random_type == "letters":
+                        self.ui.set_question("Write the following sound/letter." ,native, learning)
+                    else:
+                        self.ui.set_question("Write the following " + random_type[:len(random_type)-1] + ".", native, learning)
+                self.ui.flash()
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            pass
+        pass
+
+if __name__ == "__main__":
+    main()
