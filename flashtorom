@@ -41,7 +41,8 @@ def main():
                     "write" : True,
                     "letters" : True,
                     "words" : True,
-                    "phrases" : True
+                    "phrases" : True,
+                    "tui" : False
                     }
             config_file.writelines(json.dumps(default_config, indent=2))
 
@@ -79,17 +80,18 @@ class Configuration:
                   config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
                   self._setDefaultList(name) if name is not None else False,
+                '-t' : lambda config:config.update({'tui':True}),
                 }
 
         # loop through args
         while counter < len(sys.argv):
             arg = sys.argv[counter]
             try:
-                # store result of lambda in result
+                # store result of lambda for if we need to evaluate a parameterised argument
                 result = args.get(arg)(self.config) if argStore is None else args.get(argStore)(self.config,arg)
-                # clear argstore once we are done using the argument
-                argStore = None
                 if result is not None:
+                    # clear argstore once we are done using the argument
+                    argStore = None
                     # store the current argument if we need it for the next execution
                     argStore = arg
             except Exception:
@@ -98,6 +100,7 @@ class Configuration:
             counter = counter + 1
 
         # default parameter logic
+        # this fills in all the parameters with values provided from the config file if they are not modified
         selection = [
             ("letters", self.config.get("letters", None)),
             ("words", self.config.get("words", None)),
@@ -110,9 +113,13 @@ class Configuration:
         use = [
             ("use", self.config.get("use", None))
         ]
+        ui = [
+                ("tui", self.config.get("tui", None))
+        ]
         self.fillMissingParameters(selection)
         self.fillMissingParameters(modes)
         self.fillMissingParameters(use)
+        self.fillMissingParameters(ui)
 
     def fillMissingParameters(self,args:list[tuple]):
         KEY = 0
@@ -165,6 +172,9 @@ class Configuration:
                         except Exception:
                             print("Invalid section name: " + current_type)
                             exit()
+                    # emptyline
+                    elif len(potential_pair) == 1 and potential_pair[0].strip() == "":
+                        pass
                     # bad body of a section case
                     elif len(potential_pair) > 2:
                         print("You have multiple = signs in your wordlist on one line, that is not allowed")
@@ -231,6 +241,7 @@ def printHelp():
             NOTE: this ignores the -u/--use flag.
 --setdefaultlist <listname> : sets the list you provide to the
             default list that the program uses.
+-t (TUI) : Uses the TUI instead of the default CLI
           """)
     exit()
 
@@ -243,6 +254,7 @@ def debugOut(out):
 class UI:
     # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
     answer_visible = False
+    use_tui = False
 
     def __init__(self,stdscr:curses.window):
         self.columns, self.rows = os.get_terminal_size()
@@ -255,6 +267,7 @@ class UI:
         signal.signal(signal.SIGWINCH, self._resize_signal_event)
     def __enter__(self):
         curses.curs_set(0)
+        curses.use_default_colors()
         return self
     def __exit__(self, exc_type, exc_value, traceback):
         curses.curs_set(1)
@@ -291,9 +304,9 @@ class UI:
     # Newlines must be placed in strings
     def _redraw(self):
         # Buffer indexes
-        Y = 0
-        X = 1
-        STRING = 2
+        CURSOR_Y_POS = 0
+        CURSOR_X_POS = 1
+        STRING_TO_WRITE = 2
 
         self.buffer.clear_buffer()
         self._set_buffer()
@@ -301,13 +314,20 @@ class UI:
         #read buffer
         buffer = self.buffer.get_buffer()
         for instruction in buffer:
-            self.scr.addstr(instruction[Y], instruction[X], instruction[STRING])
+            self.scr.addstr(
+                    instruction[CURSOR_Y_POS],
+                    instruction[CURSOR_X_POS],
+                    instruction[STRING_TO_WRITE])
         self.scr.refresh()
 
     # For now this just calls cli function but in future might
     # Be able to switch between CLI and TUI
     def _set_buffer(self):
-        self._write_cli_to_buffer(self.title, self.question, self.answer)
+        if self.use_tui:
+            self._write_tui_to_buffer(self.title, self.question, self.answer)
+        else:
+            self._write_cli_to_buffer(self.title, self.question, self.answer)
+
 
     # CLI simple interactive line by line
     def _write_cli_to_buffer(self, title, question, answer):
@@ -319,16 +339,35 @@ class UI:
             self.buffer.print_at_position(2, 0, "Answer: " + '█' * len(answer))
 
     # Uses a more visually interesting UI
-    def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
+    def _write_tui_to_buffer(self, title, question, answer):
         # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
+        MAX_X = self.columns - 1
+        MAX_Y = self.rows - 1
+        self._draw_box((0,MAX_X),(MAX_Y,0))
         return
+
+    # Takes two tuples of format (Y,X)
+    def _draw_box(self, top_right, bottom_left):
+        Y = 0
+        X = 1
+        WIDTH = top_right[X] - bottom_left[X]
+        # Draw the box border
+        # Top and bottom
+        self.buffer.print_at_position(top_right[Y], bottom_left[X], "█"*WIDTH)
+        self.buffer.print_at_position(bottom_left[Y], bottom_left[X], "█"*WIDTH)
+        # margins
+        count = top_right[Y] + 1
+        while count < bottom_left[Y]:
+            self.buffer.print_at_position(count, bottom_left[X], "█"+" "*(top_right[X]-2)+"█")
+            count = count + 1
 
     # Determines width of text so that it can be centered properly
     def _text_width(self, text:str)->tuple:
         # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
         return
 
-    # Moves cursor in terminal. Used for constructing TUI
+# Holds instructions for where to move the cursor and write charcters
+# The buffer contains tuples of the form (Y,X,String) where Y,X are the co-ordinates on screen and String is the string to write for this instruction
 class Buffer:
     _buffer = []
     def print_at_position(self, y:int, x:int, toprint:str)->tuple:
@@ -354,6 +393,7 @@ class LogicController:
             self.read_write.append("write")
         self.ui = interface
         self.language = config.get("use")
+        self.ui.use_tui = config.get("tui",False)
 
     def loop(self):
         try:
