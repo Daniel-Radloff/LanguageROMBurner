@@ -251,6 +251,9 @@ def debugOut(out):
 # Contains all the UI display logic availible methods are:
 # 1. set_question(title,question,answer) which makes a dialogue with answer hidden.
 # 2. toggle_answer_visibility() changes visibility of answer.
+# Used in the draw methods
+Y = 0
+X = 1
 class UI:
     # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
     answer_visible = False
@@ -310,8 +313,6 @@ class UI:
     # Newlines must be placed in strings
     def _redraw(self):
         # Buffer indexes
-        CURSOR_Y_POS = 0
-        CURSOR_X_POS = 1
         STRING_TO_WRITE = 2
 
         self.buffer.clear_buffer()
@@ -321,8 +322,8 @@ class UI:
         buffer = self.buffer.get_buffer()
         for instruction in buffer:
             self.scr.addstr(
-                    instruction[CURSOR_Y_POS],
-                    instruction[CURSOR_X_POS],
+                    instruction[Y],
+                    instruction[X],
                     instruction[STRING_TO_WRITE])
         self.scr.refresh()
 
@@ -351,18 +352,23 @@ class UI:
         # TQA = Title, question, answer
         MAX_X = self.columns - 1
         MAX_Y = self.rows - 1
+        # How much space must be between borders and text
+        TQA_PADDING = 1
         QUESTION_WINDOW_PADDING = 10
+
+
         # Window Border
         self._draw_box((0,MAX_X),(MAX_Y,0))
         # Draw Question Box:
 
-        formatted_tqa = self._format_question(title, question, answer, MAX_X - QUESTION_WINDOW_PADDING+4)
+        formatted_tqa = self._format_question(title, question, answer, MAX_X - (QUESTION_WINDOW_PADDING+4+2+2))
         # Space offset for title, offset for question, offset for answer:
         #   y 2 for title border + title
         #   y 2 for answer + answer
         #   y 2 for question + question
+        #   Y 1 for window padding
         #   x 4
-        Q_BOX_HEIGHT = 2*3 + 4 + sum([len(lines) for lines in formatted_tqa])
+        Q_BOX_HEIGHT = 2*3 + 4 + 1 + sum([len(lines) for lines in formatted_tqa])
         WINDOW_CENTER = round(MAX_Y / 2)
         Q_BOX_CENTER_OFFSET = round(Q_BOX_HEIGHT/2)
         Q_BOX_MARGIN = round(QUESTION_WINDOW_PADDING/2)
@@ -374,18 +380,73 @@ class UI:
                 WINDOW_CENTER + Q_BOX_CENTER_OFFSET,
                 Q_BOX_MARGIN
                 )
+
         self._draw_box(Q_BOX_TR, Q_BOX_BL)
-        return
+        # Title Box
+        # One below the Q_BOX, one next to box
+        T_BOX_TR = (
+                Q_BOX_TR[Y] + 2,
+                Q_BOX_TR[X] - 2
+                )
+        # Add padding along with body height
+        T_BOX_BL = (
+                T_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[0]),
+                Q_BOX_BL[X] + 2
+                )
+        self._draw_box(T_BOX_TR, T_BOX_BL)
+        self._center_lines(T_BOX_TR, T_BOX_BL, formatted_tqa[0])
+
+        # Question Box
+        Q_BOX_TR = (
+                T_BOX_BL[Y] + 2,
+                T_BOX_TR[X]
+                )
+        Q_BOX_BL = (
+                Q_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[1]),
+                T_BOX_BL[X]
+                )
+
+        self._draw_titled_box(Q_BOX_TR, Q_BOX_BL, "Question")
+        self._center_lines(Q_BOX_TR, Q_BOX_BL, formatted_tqa[1])
+
+        A_BOX_TR = (
+                Q_BOX_BL[Y] + 2,
+                Q_BOX_TR[X]
+                )
+        A_BOX_BL = (
+                A_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[2]),
+                Q_BOX_BL[X]
+                )
+        self._draw_titled_box(A_BOX_TR, A_BOX_BL, "Answer")
+        self._center_lines(A_BOX_TR, A_BOX_BL, formatted_tqa[2])
+
+
+    """
+    Takes in top_right bottom_left, lines is a list of strings, padding parameter defaults to true
+    padding determines if box padding must be used or not
+    """
+    def _center_lines(self, top_right, bottom_left, lines, padding=True):
+        Y_OFFSET = 1 if padding else 0
+        count = 0
+        draw_row_position = top_right[Y] + Y_OFFSET
+        while draw_row_position <= bottom_left[Y]-Y_OFFSET:
+            try:
+                current_line = lines[count]
+                # (right-left)/2+left = the center of the box, line_lenght/2 for the offset of the text used to find start of box, center-line_lenght = column start position
+                column_start_position = int((top_right[X]-bottom_left[X])/2 + bottom_left[X] - len(current_line)/2)
+                self.buffer.print_at_position(draw_row_position, column_start_position, current_line)
+                count = count + 1
+                draw_row_position = draw_row_position + 1
+            except IndexError():
+                return
 
     # Takes two tuples of format (Y,X)
     def _draw_box(self, top_right, bottom_left):
-        Y = 0
-        X = 1
         WIDTH = top_right[X] - bottom_left[X]
         # Draw the box border
         # Top and bottom
-        self.buffer.print_at_position(top_right[Y], bottom_left[X], "█"*WIDTH)
-        self.buffer.print_at_position(bottom_left[Y], bottom_left[X], "█"*WIDTH)
+        self.buffer.print_at_position(top_right[Y], bottom_left[X], "┏" + "━"*(WIDTH-2) + "┓")
+        self.buffer.print_at_position(bottom_left[Y], bottom_left[X],"┗" +  "━"*(WIDTH-2) + "┛")
         # margins
         count = top_right[Y] + 1
         while count < bottom_left[Y]:
@@ -397,16 +458,17 @@ class UI:
         formatted_title = self._format_text(title, MAX_X)
         formatted_question = self._format_text(question, MAX_X)
         if self.answer_visible:
-            formatted_answer = self._format_text("Answer: " + answer, MAX_X)
+            formatted_answer = self._format_text("Answer: " + answer, MAX_X) if not self.use_tui else self._format_text(answer, MAX_X)
         else:
-            formatted_answer = self._format_text("Answer: " + ('█' * len(answer)), MAX_X)
+            hidden_text = '█' * self._text_width(answer)
+            formatted_answer = self._format_text("Answer: " + hidden_text , MAX_X) if not self.use_tui else self._format_text(hidden_text, MAX_X)
         return (formatted_title, formatted_question, formatted_answer)
 
 
     # Checks if text length per line fits within constraints and modifies the lines if needed.
     def _format_text(self, text, MAX_LENGTH):
         new_lines = []
-        line_length = len(text)
+        line_length = self._text_width(text)
         if line_length > MAX_LENGTH:
             # Find amount of new lines we need
             num_new_lines = int(line_length / MAX_LENGTH)
@@ -418,10 +480,20 @@ class UI:
             new_lines.append(text)
         return new_lines
 
+    # draws a box with a specified title
+    def _draw_titled_box(self, top_right, bottom_left, title):
+        self._draw_box(top_right, bottom_left)
+        # WIDTH/2 added to left margin
+        CENTER = int((top_right[X] - bottom_left[X])/2) + bottom_left[X]
+        # Title lenght + 2 for = characters divided by 2
+        TITLE_OFFSET = int(self._text_width(title)/2)
+        TITLE_WRITE_POSITION  = CENTER - TITLE_OFFSET
+        self.buffer.print_at_position(top_right[Y], TITLE_WRITE_POSITION, title)
+
     # Determines width of text so that it can be centered properly
-    def _text_width(self, text:str)->tuple:
+    def _text_width(self, text:str)->int:
         # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
-        return
+        return len(text)
 
 # Holds instructions for where to move the cursor and write charcters
 # The buffer contains tuples of the form (Y,X,String) where Y,X are the co-ordinates on screen and String is the string to write for this instruction
