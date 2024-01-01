@@ -3,6 +3,8 @@
 A TUI tool that I use to help learn the alphabet or anything else related to the Hindi Language, however it can be used to learn any alphabet/short phrases that you would like.
 The program reads from the word or letter list that you would like it to use. These can either be custom or someone elses pre-existing setup.
 
+Currently supports Linux only. I will be working on additional features and also to provide support to OSX and Windows in the near future.
+
 [Motivation and Usage](#motivation)
 
 [Installation](#install)
