@@ -41,7 +41,8 @@ def main():
                     "write" : True,
                     "letters" : True,
                     "words" : True,
-                    "phrases" : True
+                    "phrases" : True,
+                    "tui" : False
                     }
             config_file.writelines(json.dumps(default_config, indent=2))
 
@@ -79,17 +80,18 @@ class Configuration:
                   config.update({'use':name}) if name is not None else False,
                 '--setdefaultlist' : lambda config, name=None:
                   self._setDefaultList(name) if name is not None else False,
+                '-t' : lambda config:config.update({'tui':True}),
                 }
 
         # loop through args
         while counter < len(sys.argv):
             arg = sys.argv[counter]
             try:
-                # store result of lambda in result
+                # store result of lambda for if we need to evaluate a parameterised argument
                 result = args.get(arg)(self.config) if argStore is None else args.get(argStore)(self.config,arg)
-                # clear argstore once we are done using the argument
-                argStore = None
                 if result is not None:
+                    # clear argstore once we are done using the argument
+                    argStore = None
                     # store the current argument if we need it for the next execution
                     argStore = arg
             except Exception:
@@ -98,6 +100,7 @@ class Configuration:
             counter = counter + 1
 
         # default parameter logic
+        # this fills in all the parameters with values provided from the config file if they are not modified
         selection = [
             ("letters", self.config.get("letters", None)),
             ("words", self.config.get("words", None)),
@@ -110,9 +113,13 @@ class Configuration:
         use = [
             ("use", self.config.get("use", None))
         ]
+        ui = [
+                ("tui", self.config.get("tui", None))
+        ]
         self.fillMissingParameters(selection)
         self.fillMissingParameters(modes)
         self.fillMissingParameters(use)
+        self.fillMissingParameters(ui)
 
     def fillMissingParameters(self,args:list[tuple]):
         KEY = 0
@@ -165,6 +172,9 @@ class Configuration:
                         except Exception:
                             print("Invalid section name: " + current_type)
                             exit()
+                    # emptyline
+                    elif len(potential_pair) == 1 and potential_pair[0].strip() == "":
+                        pass
                     # bad body of a section case
                     elif len(potential_pair) > 2:
                         print("You have multiple = signs in your wordlist on one line, that is not allowed")
@@ -231,6 +241,7 @@ def printHelp():
             NOTE: this ignores the -u/--use flag.
 --setdefaultlist <listname> : sets the list you provide to the
             default list that the program uses.
+-t (TUI) : Uses the TUI instead of the default CLI
           """)
     exit()
 
@@ -240,9 +251,13 @@ def debugOut(out):
 # Contains all the UI display logic availible methods are:
 # 1. set_question(title,question,answer) which makes a dialogue with answer hidden.
 # 2. toggle_answer_visibility() changes visibility of answer.
+# Used in the draw methods
+Y = 0
+X = 1
 class UI:
     # TODO: make this rather a string, multiple prints will take up too many OS calls for TUI draw i think
     answer_visible = False
+    use_tui = False
 
     def __init__(self,stdscr:curses.window):
         self.columns, self.rows = os.get_terminal_size()
@@ -252,9 +267,9 @@ class UI:
         self.scr = stdscr
         self.buffer = Buffer()
         # updates terminal dimentions on resize
-        signal.signal(signal.SIGWINCH, self._resize_signal_event)
     def __enter__(self):
         curses.curs_set(0)
+        curses.use_default_colors()
         return self
     def __exit__(self, exc_type, exc_value, traceback):
         curses.curs_set(1)
@@ -263,11 +278,18 @@ class UI:
     # Sets Question information, resets answer visibilty to false, display question
     def flash(self):
         #TODO: depending on mode change cursor position
-        self.scr.getch()
-        #self._capture_output()
+        self._capture_input()
         self.toggle_answer_visibility()
-        self.scr.getch()
-        #self._capture_output()
+        self._capture_input()
+
+    def _capture_input(self):
+        while True:
+            usr_in = self.scr.getch()
+            if usr_in != curses.KEY_RESIZE:
+                return
+            else:
+                self._resize_signal_event()
+
 
     def set_question(self,title,question,answer):
         self.title = title
@@ -283,7 +305,7 @@ class UI:
 
 
     # resize event
-    def _resize_signal_event(self, signum, frame):
+    def _resize_signal_event(self):
         self.rows, self.columns = self.scr.getmaxyx()
         self._redraw()
 
@@ -291,9 +313,7 @@ class UI:
     # Newlines must be placed in strings
     def _redraw(self):
         # Buffer indexes
-        Y = 0
-        X = 1
-        STRING = 2
+        STRING_TO_WRITE = 2
 
         self.buffer.clear_buffer()
         self._set_buffer()
@@ -301,34 +321,183 @@ class UI:
         #read buffer
         buffer = self.buffer.get_buffer()
         for instruction in buffer:
-            self.scr.addstr(instruction[Y], instruction[X], instruction[STRING])
+            self.scr.addstr(
+                    instruction[Y],
+                    instruction[X],
+                    instruction[STRING_TO_WRITE],
+                    curses.color_pair(0))
         self.scr.refresh()
 
     # For now this just calls cli function but in future might
     # Be able to switch between CLI and TUI
     def _set_buffer(self):
-        self._write_cli_to_buffer(self.title, self.question, self.answer)
+        if self.use_tui:
+            self._write_tui_to_buffer(self.title, self.question, self.answer)
+        else:
+            self._write_cli_to_buffer(self.title, self.question, self.answer)
+
 
     # CLI simple interactive line by line
     def _write_cli_to_buffer(self, title, question, answer):
-        self.buffer.print_at_position(0,0,title)
-        self.buffer.print_at_position(1,0, question)
-        if self.answer_visible:
-            self.buffer.print_at_position(2, 0, "Answer: "+answer)
-        else:
-            self.buffer.print_at_position(2, 0, "Answer: " + '█' * len(answer))
+        line_number = 0
+        MAX_X = self.columns - 1
+        sections = self._format_question(title, question, answer, MAX_X)
+        for section in sections:
+            for line in section:
+                self.buffer.print_at_position(line_number, 0, line)
+                line_number = line_number + 1
 
     # Uses a more visually interesting UI
-    def _write_tui_to_buffer(self, xy:tuple, title, question, answer, answer_visible):
+    def _write_tui_to_buffer(self, title, question, answer):
         # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
-        return
+        # TQA = Title, question, answer
+        MAX_X = self.columns - 1
+        MAX_Y = self.rows - 1
+        # How much space must be between borders and text
+        TQA_PADDING = 1
+        QUESTION_WINDOW_PADDING = 10
+
+
+        # Window Border
+        self._draw_box((0,MAX_X),(MAX_Y,0))
+        # Draw Question Box:
+
+        formatted_tqa = self._format_question(title, question, answer, MAX_X - (QUESTION_WINDOW_PADDING+4+2+2))
+        # Space offset for title, offset for question, offset for answer:
+        #   y 2 for title border + title
+        #   y 2 for answer + answer
+        #   y 2 for question + question
+        #   Y 1 for window padding
+        #   x 4
+        Q_BOX_HEIGHT = 2*3 + 4 + 1 + sum([len(lines) for lines in formatted_tqa])
+        WINDOW_CENTER = round(MAX_Y / 2)
+        Q_BOX_CENTER_OFFSET = round(Q_BOX_HEIGHT/2)
+        Q_BOX_MARGIN = round(QUESTION_WINDOW_PADDING/2)
+        Q_BOX_TR = (
+                WINDOW_CENTER - Q_BOX_CENTER_OFFSET,
+                MAX_X - Q_BOX_MARGIN
+                )
+        Q_BOX_BL = (
+                WINDOW_CENTER + Q_BOX_CENTER_OFFSET,
+                Q_BOX_MARGIN
+                )
+
+        self._draw_box(Q_BOX_TR, Q_BOX_BL)
+        # Title Box
+        # One below the Q_BOX, one next to box
+        T_BOX_TR = (
+                Q_BOX_TR[Y] + 2,
+                Q_BOX_TR[X] - 2
+                )
+        # Add padding along with body height
+        T_BOX_BL = (
+                T_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[0]),
+                Q_BOX_BL[X] + 2
+                )
+        self._draw_box(T_BOX_TR, T_BOX_BL)
+        self._center_lines(T_BOX_TR, T_BOX_BL, formatted_tqa[0])
+
+        # Question Box
+        Q_BOX_TR = (
+                T_BOX_BL[Y] + 2,
+                T_BOX_TR[X]
+                )
+        Q_BOX_BL = (
+                Q_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[1]),
+                T_BOX_BL[X]
+                )
+
+        self._draw_titled_box(Q_BOX_TR, Q_BOX_BL, "Question")
+        self._center_lines(Q_BOX_TR, Q_BOX_BL, formatted_tqa[1])
+
+        A_BOX_TR = (
+                Q_BOX_BL[Y] + 2,
+                Q_BOX_TR[X]
+                )
+        A_BOX_BL = (
+                A_BOX_TR[Y] + TQA_PADDING + len(formatted_tqa[2]),
+                Q_BOX_BL[X]
+                )
+        self._draw_titled_box(A_BOX_TR, A_BOX_BL, "Answer")
+        self._center_lines(A_BOX_TR, A_BOX_BL, formatted_tqa[2])
+
+
+    """
+    Takes in top_right bottom_left, lines is a list of strings, padding parameter defaults to true
+    padding determines if box padding must be used or not
+    """
+    def _center_lines(self, top_right, bottom_left, lines, padding=True):
+        Y_OFFSET = 1 if padding else 0
+        count = 0
+        draw_row_position = top_right[Y] + Y_OFFSET
+        while draw_row_position <= bottom_left[Y]-Y_OFFSET:
+            try:
+                current_line = lines[count]
+                # (right-left)/2+left = the center of the box, line_lenght/2 for the offset of the text used to find start of box, center-line_lenght = column start position
+                column_start_position = int((top_right[X]-bottom_left[X])/2 + bottom_left[X] - len(current_line)/2)
+                self.buffer.print_at_position(draw_row_position, column_start_position, current_line)
+                count = count + 1
+                draw_row_position = draw_row_position + 1
+            except IndexError():
+                return
+
+    # Takes two tuples of format (Y,X)
+    def _draw_box(self, top_right, bottom_left):
+        WIDTH = top_right[X] - bottom_left[X]
+        # Draw the box border
+        # Top and bottom
+        self.buffer.print_at_position(top_right[Y], bottom_left[X], "┏" + "━"*(WIDTH-2) + "┓")
+        self.buffer.print_at_position(bottom_left[Y], bottom_left[X],"┗" +  "━"*(WIDTH-2) + "┛")
+        # margins
+        count = top_right[Y] + 1
+        while count < bottom_left[Y]:
+            self.buffer.print_at_position(count, bottom_left[X], "█"+" "*(WIDTH-2)+"█")
+            count = count + 1
+
+    # Returns a tuple of lenght three of the form (title, question, answer) where all are lists
+    def _format_question(self, title, question, answer, MAX_X):
+        formatted_title = self._format_text(title, MAX_X)
+        formatted_question = self._format_text(question, MAX_X)
+        if self.answer_visible:
+            formatted_answer = self._format_text("Answer: " + answer, MAX_X) if not self.use_tui else self._format_text(answer, MAX_X)
+        else:
+            hidden_text = '█' * self._text_width(answer)
+            formatted_answer = self._format_text("Answer: " + hidden_text , MAX_X) if not self.use_tui else self._format_text(hidden_text, MAX_X)
+        return (formatted_title, formatted_question, formatted_answer)
+
+
+    # Checks if text length per line fits within constraints and modifies the lines if needed.
+    def _format_text(self, text, MAX_LENGTH):
+        new_lines = []
+        line_length = self._text_width(text)
+        if line_length > MAX_LENGTH:
+            # Find amount of new lines we need
+            num_new_lines = int(line_length / MAX_LENGTH)
+            for count in range(num_new_lines):
+                start = count*MAX_LENGTH
+                new_lines.append(text[start:start + MAX_LENGTH])
+            new_lines.append(text[num_new_lines*MAX_LENGTH:])
+        else:
+            new_lines.append(text)
+        return new_lines
+
+    # draws a box with a specified title
+    def _draw_titled_box(self, top_right, bottom_left, title):
+        self._draw_box(top_right, bottom_left)
+        # WIDTH/2 added to left margin
+        CENTER = int((top_right[X] - bottom_left[X])/2) + bottom_left[X]
+        # Title lenght + 2 for = characters divided by 2
+        TITLE_OFFSET = int(self._text_width(title)/2)
+        TITLE_WRITE_POSITION  = CENTER - TITLE_OFFSET
+        self.buffer.print_at_position(top_right[Y], TITLE_WRITE_POSITION, title)
 
     # Determines width of text so that it can be centered properly
-    def _text_width(self, text:str)->tuple:
+    def _text_width(self, text:str)->int:
         # TODO: Unicode character width is a issue that I still thinking of how to deal with. Leaving this for future implimentation
-        return
+        return len(text)
 
-    # Moves cursor in terminal. Used for constructing TUI
+# Holds instructions for where to move the cursor and write charcters
+# The buffer contains tuples of the form (Y,X,String) where Y,X are the co-ordinates on screen and String is the string to write for this instruction
 class Buffer:
     _buffer = []
     def print_at_position(self, y:int, x:int, toprint:str)->tuple:
@@ -354,6 +523,7 @@ class LogicController:
             self.read_write.append("write")
         self.ui = interface
         self.language = config.get("use")
+        self.ui.use_tui = config.get("tui",False)
 
     def loop(self):
         try:

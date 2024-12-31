@@ -83,7 +83,12 @@ You have 3 different headings that you can use that pertain to the different mod
 1. `$$ Letters`
 2. `$$ Words`
 3. `$$ Phrases`
+
 All your Letters go under Letters etc etc.
+
+#### Competence
+If you have learnt something enough that you want to reduce its change of being pulled from the question pool, then you can do this by adding a `;` to the end of the line. If a `;` is detected in the middle of a sentence then it will be ignored, only `;`'s at the end of lines are tallied. If you want to reduce the chance of that line being in the question pool even further: append more `;`'s to the line.
+
 ---
 
 <a name="flags" />
